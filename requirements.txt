@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pillow
+insightface
+onnxruntime
+opencv-python
+python-dotenv
