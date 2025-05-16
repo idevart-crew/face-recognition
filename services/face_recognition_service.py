@@ -1,11 +1,8 @@
 from insightface.app import FaceAnalysis
-from concurrent.futures import ThreadPoolExecutor
-import asyncio
 import numpy as np
 import cv2
 import base64
 import os
-import time
 
 class FaceRecognitionService:
     _instance = None
@@ -13,21 +10,15 @@ class FaceRecognitionService:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(FaceRecognitionService, cls).__new__(cls)
-            cls._instance.face_app = FaceAnalysis(name=os.getenv("FACE_RECOGNITION_MODEL"), root="cores", providers=["CPUExecutionProvider"])
+            # cls._instance.face_app = FaceAnalysis(name=os.getenv("FACE_RECOGNITION_MODEL"), providers=["CPUExecutionProvider"])
+            cls._instance.face_app = FaceAnalysis(name=os.getenv("FACE_RECOGNITION_MODEL"), providers=["CUDAExecutionProvider"])
             cls._instance.face_app.prepare(ctx_id=0)
         return cls._instance
 
     async def get_embedding(self, base64_string: str):
-        executor = ThreadPoolExecutor(max_workers=4)
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(executor, self.get_embedding_sync, base64_string)
-
-    # async def get_embedding(self, base64_string: str):
-    def get_embedding_sync(self, base64_string: str):
         image_data = base64.b64decode(base64_string)
         nparr = np.frombuffer(image_data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        img = cv2.resize(img, (256, 256))
         faces = self.face_app.get(img)
 
         if len(faces) == 0:
@@ -35,8 +26,6 @@ class FaceRecognitionService:
 
         largest_face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
         
-        # self.save_with_bbox(img, largest_face.bbox.astype(int))
-
         # Tilt face detection
         # landmarks = largest_face.landmark_3d_68
         # left_eye = landmarks[36] 
@@ -56,19 +45,39 @@ class FaceRecognitionService:
             "status": True, 
             "message": "ok", 
             "data": {
+                "img" : img,
                 "embd": largest_face.normed_embedding, 
-                "bbox": largest_face.bbox.astype(int), 
+                "bbox": self.make_bbox_square(largest_face.bbox, img.shape, 0), 
                 "conf": float(f"{largest_face.det_score:.2f}"),
-                "tilt": 0#f"{eye_diff} degree"
+                # "tilt": f"{eye_diff} degree"
             }
         }
 
-    def save_with_bbox(self, img, bbox, output_dir="output"):
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, f"{time.time()}.jpg")
+    def make_bbox_square(self, bbox, img_shape, margin_ratio=0.1):
+        x1, y1, x2, y2 = bbox.astype(int)
+        w = x2 - x1
+        h = y2 - y1
 
-        cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 0), 2)
-        cv2.imwrite(output_path, img)
+        side = h
+        center_x = x1 + w // 2
+        offset_y = int(0.1 * h)
+        new_x1 = center_x - side // 2
+        new_y1 = y1 - offset_y
+
+        margin = int(margin_ratio * side)
+        new_x1 -= margin
+        new_y1 -= margin
+        side += 2 * margin
+
+        new_x1 = max(new_x1, 0)
+        new_y1 = max(new_y1, 0)
+        new_x1 = min(new_x1, img_shape[1] - side)
+        new_y1 = min(new_y1, img_shape[0] - side)
+
+        new_x2 = new_x1 + side
+        new_y2 = new_y1 + side
+
+        return np.array([new_x1, new_y1, new_x2, new_y2])
 
 
 face_service_instance = FaceRecognitionService()

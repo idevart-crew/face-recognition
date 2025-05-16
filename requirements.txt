@@ -2,6 +2,6 @@ fastapi
 uvicorn
 pillow
 insightface
-onnxruntime
+onnxruntime-gpu
 opencv-python
 python-dotenv
